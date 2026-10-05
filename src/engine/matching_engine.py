@@ -9,11 +9,10 @@ class MatchingEngine:
     """
     Motor de Casamento de Ofertas (Matching & Execution Engine).
     
-    Responsabilidade Estrita (Opção 3):
     - Receber uma ordem (LIMIT ou MARKET) e cruzá-la contra o OrderBook.
     - Casar ordens agressoras contra ordens passivas no topo do livro (Price-Time Priority).
     - Executar os trades sempre ao preço da ordem passiva (maker price).
-    - Consolidar/agregar trades por nível de preço (requisito da página 2 do PDF).
+    - Consolidar/agregar trades por nível de preço.
     - Descartar saldo não preenchido de ordens MARKET.
     - Repousar saldo não preenchido de ordens LIMIT no livro como passiva.
     - Zero lógica de gerenciamento de pegs, cancelamento ou alteração (pertencem ao OrderManager).
@@ -70,7 +69,7 @@ class MatchingEngine:
             if maker.qty == 0:
                 target_book.remove_order(maker.id)
 
-            # Agregação de trades por nível de preço (exigência da página 2 do PDF)
+            # Agregação de trades por nível de preço 
             if trade_price == current_trade_price:
                 current_trade_qty += trade_qty
             else:
