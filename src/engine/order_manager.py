@@ -10,7 +10,7 @@ class OrderManager:
     """
     Gerenciador de Ordens (Order Management System - OMS básico).
 
-    Responsabilidades deste componente básico:
+    Responsabilidades deste componente:
     - Ponto único de entrada da aplicação para criação e submissão de ordens.
     - Gerenciamento centralizado de IDs inteiros sequenciais (1, 2, 3...).
     - Gerenciamento do contador sequencial de prioridade temporal (sequence: 1, 2, 3...).
