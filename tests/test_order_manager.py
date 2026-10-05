@@ -1,7 +1,7 @@
 from decimal import Decimal
 import pytest
 
-from src.domain.models import OrderType, Side, Trade
+from src.domain.models import OrderStatus, OrderType, Side, Trade
 from src.engine.order_manager import OrderManager
 
 
@@ -78,3 +78,36 @@ def test_validation_errors():
 
     with pytest.raises(ValueError, match="Quantidade deve ser estritamente positiva"):
         manager.submit_market_order(Side.BUY, -5)
+
+
+def test_cancel_active_order_success():
+    """Valida o cancelamento de uma ordem ativa no livro (Requisito Adicional 3)."""
+    manager = OrderManager()
+    order, _ = manager.submit_limit_order(Side.BUY, Decimal("10.00"), 100)
+
+    cancelled = manager.cancel_order(order.id)
+
+    assert cancelled == order
+    assert cancelled.status == OrderStatus.CANCELLED
+    # Ordem deve ter sido retirada do livro
+    assert manager.book.get_order(order.id) is None
+    assert manager.book.is_empty is True
+
+
+def test_cancel_nonexistent_order_returns_none():
+    """Valida que tentar cancelar um ID que não existe retorna None com segurança."""
+    manager = OrderManager()
+    assert manager.cancel_order(999) is None
+
+
+def test_cancel_already_filled_order_returns_none():
+    """Valida que uma ordem 100% preenchida não pode ser cancelada (já saiu do livro)."""
+    manager = OrderManager()
+    manager.submit_limit_order(Side.SELL, Decimal("20.00"), 100)
+
+    # Executa totalmente a ordem de venda com uma compra a mercado
+    manager.submit_market_order(Side.BUY, 100)
+
+    # Tenta cancelar a ordem de venda id=1
+    assert manager.cancel_order(1) is None
+

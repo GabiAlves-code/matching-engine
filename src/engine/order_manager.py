@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Optional
 
-from src.domain.models import Order, OrderType, Side, Trade
+from src.domain.models import Order, OrderStatus, OrderType, Side, Trade
 from src.engine.matching_engine import MatchingEngine
 from src.engine.order_book import OrderBook
 
@@ -108,3 +108,19 @@ class OrderManager:
 
         trades = self._matching_engine.process_order(order, self._book)
         return order, trades
+
+    def cancel_order(self, order_id: int) -> Optional[Order]:
+        """
+        Cancela uma ordem ativa no livro pelo seu identificador único.
+
+        Retorna:
+            Optional[Order]: A ordem cancelada (com status CANCELLED), ou
+            None caso a ordem não esteja ativa no livro (já preenchida ou ID inexistente).
+        """
+        order = self._book.remove_order(order_id)
+        if order is None:
+            return None
+
+        order.status = OrderStatus.CANCELLED
+        return order
+
