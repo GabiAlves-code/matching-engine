@@ -1,9 +1,10 @@
 from decimal import Decimal
 from typing import Optional
 
-from src.domain.models import Order, OrderStatus, OrderType, Side, Trade
+from src.domain.models import Order, OrderStatus, OrderType, PegReference, Side, Trade
 from src.engine.matching_engine import MatchingEngine
 from src.engine.order_book import OrderBook
+from src.engine.peg_manager import PegManager
 
 
 class OrderManager:
@@ -16,6 +17,7 @@ class OrderManager:
     - Gerenciamento do contador sequencial de prioridade temporal (sequence: 1, 2, 3...).
     - Validação de parâmetros de entrada (preço > 0, quantidade > 0).
     - Orquestração da execução delegando o cruzamento de ofertas à MatchingEngine.
+    - Coordenação do PegManager para repique dinâmico de ordens pegged.
     - Retorno estruturado contendo a ordem criada e a lista de trades gerados.
     - Zero chamadas a print().
     """
@@ -31,6 +33,7 @@ class OrderManager:
             if matching_engine is not None
             else MatchingEngine(self._book)
         )
+        self._peg_manager: PegManager = PegManager(self._book)
         self._next_order_id: int = 1
         self._next_sequence: int = 1
 
@@ -43,6 +46,11 @@ class OrderManager:
     def matching_engine(self) -> MatchingEngine:
         """Retorna a matching engine utilizada."""
         return self._matching_engine
+
+    @property
+    def peg_manager(self) -> PegManager:
+        """Retorna o gerenciador de ordens pegged."""
+        return self._peg_manager
 
     def _get_next_order_id(self) -> int:
         """Gera o próximo ID sequencial numérico para ordens."""
@@ -61,10 +69,6 @@ class OrderManager:
     ) -> tuple[Order, list[Trade]]:
         """
         Cria e submete uma Limit Order no sistema.
-        
-        Retorna:
-            tuple[Order, list[Trade]]: A ordem instanciada e a lista de trades gerados
-            (vazia caso seja passiva e apenas repouse no livro).
         """
         if price <= Decimal("0"):
             raise ValueError(f"Preço deve ser estritamente positivo, recebido: {price}")
@@ -82,6 +86,7 @@ class OrderManager:
         )
 
         trades = self._matching_engine.process_order(order, self._book)
+        self._peg_manager.reprice()
         return order, trades
 
     def submit_market_order(
@@ -89,9 +94,6 @@ class OrderManager:
     ) -> tuple[Order, list[Trade]]:
         """
         Cria e submete uma Market Order no sistema.
-        
-        Retorna:
-            tuple[Order, list[Trade]]: A ordem de mercado instanciada e os trades gerados.
         """
         if qty <= 0:
             raise ValueError(f"Quantidade deve ser estritamente positiva, recebida: {qty}")
@@ -107,20 +109,64 @@ class OrderManager:
         )
 
         trades = self._matching_engine.process_order(order, self._book)
+        self._peg_manager.reprice()
         return order, trades
+
+    def submit_peg_order(
+        self, peg_ref: PegReference, side: Side, qty: int
+    ) -> tuple[Order, list[Trade]]:
+        """
+        Cria e registra uma Ordem Pegged
+
+        Regras:
+        - Aceita apenas 'peg bid buy' e 'peg offer sell'.
+        - qty > 0.
+        - Rejeita com ValueError se não houver ordens limites de referência,
+          ANTES de consumir id e sequence.
+        """
+        if qty <= 0:
+            raise ValueError(f"Quantidade deve ser estritamente positiva, recebida: {qty}")
+
+        if not (
+            (peg_ref == PegReference.BID and side == Side.BUY)
+            or (peg_ref == PegReference.OFFER and side == Side.SELL)
+        ):
+            raise ValueError(
+                f"Combinação inválida: suportado apenas 'peg bid buy' ou 'peg offer sell', recebido: peg {peg_ref.value} {side.value}"
+            )
+
+        ref_price = self._peg_manager.get_reference_price(side)
+        if ref_price is None:
+            raise ValueError(
+                f"Não há ordens de referência não-pegged para ancorar a ordem peg {peg_ref.value} {side.value}."
+            )
+
+        order = Order(
+            id=self._get_next_order_id(),
+            side=side,
+            order_type=OrderType.PEGGED,
+            qty=qty,
+            initial_qty=qty,
+            sequence=self._get_next_sequence(),
+            price=ref_price,
+            peg_ref=peg_ref,
+        )
+
+        self._book.add_order(order)
+        self._peg_manager.add(order)
+        self._peg_manager.reprice()
+        return order, []
 
     def cancel_order(self, order_id: int) -> Optional[Order]:
         """
         Cancela uma ordem ativa no livro pelo seu identificador único.
-        Retorna:
-            Optional[Order]: A ordem cancelada (com status CANCELLED), ou
-            None caso a ordem não esteja ativa no livro (já preenchida ou ID inexistente).
         """
         order = self._book.remove_order(order_id)
         if order is None:
             return None
 
         order.status = OrderStatus.CANCELLED
+        self._peg_manager.reprice()
         return order
 
     def modify_order(
@@ -161,6 +207,5 @@ class OrderManager:
 
         # Re-submete à engine (se cruzar o spread gera trades; se não, repousa no livro)
         trades = self._matching_engine.process_order(order, self._book)
+        self._peg_manager.reprice()
         return order, trades
-
-
